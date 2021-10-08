@@ -2,10 +2,9 @@ import os
 import fcntl
 import struct
 from fcntl import ioctl
-import ipaddress
-from typing import Union
-import subprocess
-import functools
+from util import sync_to_async, run
+import threading
+from scapy.all import *
 
 
 TUNSETIFF = 0x400454ca
@@ -14,14 +13,8 @@ IFF_TUN = 0x0001
 IFF_NO_PI = 0x1000
 MTU = 1400
 
-
-def run(cmd: str):
-    subprocess.run(cmd, shell=True, check=True)
-
-
 class Tunnel:
-
-    def __init__(self, name: str, address: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]):
+    def __init__(self, name: str, address: str):
         self.name = name
         self.address = address
 
@@ -33,12 +26,18 @@ class Tunnel:
         ioctl(tun_fd, TUNSETOWNER, 1000)
 
     def up(self):
-        cmd = f'ifconfig {self.name} {str(self.address)}/24 mtu {MTU} up'
+        cmd = f'ifconfig {self.name} {self.address}/24 mtu {MTU} up'
         run(cmd)
 
+    # @sync_to_async
     def read(self, length: int) -> bytes:
-        packet = os.read(self.fd, length)
-        return packet
+        data = os.read(self.fd, length)
+        # pkt = IP(data)
+        # print(f'read from tun data {len(data)} {pkt.src} -> {pkt.dst}')
+        return data
 
-    def write(self, packet: bytes) -> None:
-        os.write(self.fd, packet)
+    # @sync_to_async
+    def write(self, data: bytes) -> None:
+        # pkt = IP(data)
+        # print(f'write to tun data {len(data)} {pkt.src} -> {pkt.dst}')
+        os.write(self.fd, data)

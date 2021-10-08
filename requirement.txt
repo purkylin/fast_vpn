@@ -1,5 +1,4 @@
 pycryptodome
-asyncio_dgram
 asyncio
 aiohttp
 scapy
