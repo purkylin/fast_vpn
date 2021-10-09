@@ -6,12 +6,15 @@ from struct import *
 from scapy.all import *
 import os
 from cipher import Cipher
+from util import run
 
 IS_SERVER = True
-MTU = 1400
+MTU = 1500
 TUNNEL_ADDRESS = '10.10.0.1'
 ENABLE_CRYPTO = True
-ENABLE_PING = False
+
+# DEBUG Switch
+ENABLE_LOG = False
 
 
 class TCP:
@@ -42,7 +45,7 @@ class TCP:
 
             sent_total = 0
             while sent_total < len(payload):
-                count = min(MTU, len(payload))
+                count = min(MTU - 100, len(payload))
                 chunk = payload[sent_total:sent_total+count]
                 sent = peer.send(chunk)
                 sent_total += sent
@@ -58,7 +61,9 @@ class TCP:
         chunks = bytearray()
         read_length = 0
 
-        while read_length != length:
+        assert length <= MTU, f'Invalid length {length}'
+
+        while read_length < length:
             chunk = peer.recv(min(length - read_length, MTU))
             if not chunk:
                 return chunks
@@ -105,24 +110,19 @@ class TCP:
     def read_tun(self):
         while True:
             data = self.tun.read(MTU)
-            ip = IP(data)
+            if ENABLE_LOG:
+                print(f'receive {len(data)} bytes from tun')
 
+            ip = IP(data)
             result = self.sessions.get(ip.dst)
             if result:
                 self.write_packet(result[0], data, result[1])
             else:
-                print('not found', ip.dst, len(self.sessions))
-                if ENABLE_PING:
-                    peers = list(self.sessions.values())
-                    if peers:
-                        # print(peers)
-                        result = peers[0]
-                        self.write_packet(result[0], data, result[1])
+                if ENABLE_LOG:
+                    print('not found', ip.dst, len(self.sessions))
 
     def create_session(self, peer):
-        # used for decrypt
         cipher = Cipher(self.key, True)
-
         try:
             while True:
                 payload = self.read_packet(peer, cipher)
@@ -138,18 +138,57 @@ class TCP:
 
                 self.tun.write(payload)
         except Exception as e:
-            print(e)
             print('read tcp data failed')
         finally:
             print('disconnect')
             self.clear_session(peer)
 
-    def start(self, host, port):
-        self.tun = Tunnel('fastvpn', TUNNEL_ADDRESS)
-        self.tun.up()
-        thread = threading.Thread(target=self.read_tun)
-        thread.start()
+    def parse_command(self, cmd):
+        '''
+        Parse and run command.
+        '''
 
+        if cmd == 'toggle_log':
+            global ENABLE_LOG
+            ENABLE_LOG = not ENABLE_LOG
+        elif cmd == 'list_session':
+            print(self.sessions)
+        elif cmd == 'count_session':
+            print('sessions count', len(self.sessions))
+        else:
+            print('unknown command')
+
+    def debug_socket(self):
+        '''
+        Setup debug socket.
+        '''
+
+        socket_path = './.ds'
+        if os.path.exists(socket_path):
+            os.unlink(socket_path)
+
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.bind(socket_path)
+
+        while True:
+            data, addr = s.recvfrom(100)
+            cmd = data.decode('utf-8').strip()
+            print('command', cmd)
+            self.parse_command(cmd)
+
+    def setup_tunnel(self):
+        self.tun = Tunnel('fast', TUNNEL_ADDRESS)
+        self.tun.up()
+        tun_thread = threading.Thread(target=self.read_tun)
+        tun_thread.setDaemon(True)
+        tun_thread.start()
+
+    def setup_debug(self):
+        debug_thread = threading.Thread(target=self.debug_socket)
+        debug_thread.setDaemon(True)
+        debug_thread.start()
+
+    def setup_socket(self, host, port):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if IS_SERVER:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -163,21 +202,37 @@ class TCP:
                 print('new connection')
                 t = threading.Thread(
                     target=self.create_session, args=(peer,))
+                t.setDaemon(True)
                 t.start()
         else:
             print(f'Connect to server {host}:{port}, tun: {TUNNEL_ADDRESS}')
-
             s.connect((host, port))
             cipher = None
             if ENABLE_CRYPTO:
-                print(self.key)
                 cipher = Cipher(self.key, True)
             self.sessions['10.10.0.1'] = (s, cipher)
             print('Connect success')
             self.create_session(s)
 
+    def start(self, host, port):
+        run('sysctl -w net.ipv4.ip_forward=1')
+        run('iptables -t nat -I POSTROUTING -s 10.10.0.1/24 ! -d 10.10.0.1/24 -j MASQUERADE')
+
+        try:
+            self.setup_tunnel()
+            self.setup_debug()
+            self.setup_socket(host, port)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            run('iptables -t nat -D POSTROUTING -s 10.10.0.1/24 ! -d 10.10.0.1/24 -j MASQUERADE')
+
 
 def read_key(possible_key):
+    '''
+    Read crypto key from termianl or file
+    '''
+
     key = possible_key
     if not possible_key:
         if os.path.isfile("key"):

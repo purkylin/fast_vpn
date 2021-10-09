@@ -1,4 +1,5 @@
 import socket
+import threading
 from tun import Tunnel
 import select
 import argparse
@@ -8,7 +9,7 @@ import os
 from cipher import Cipher
 
 IS_SERVER = True
-MCU = 1400
+MTU = 1400  # Shoule less then 1500
 TUNNEL_ADDRESS = '10.10.0.1'
 ENABLE_CRYPTO = True
 
@@ -34,10 +35,7 @@ class UDP:
             for r in rs:
                 try:
                     if r is self.udp:
-                        (data, addr) = self.udp.recvfrom(MCU)
-
-                        if addr[0].startswith('112.65'):
-                            ip2 = IP(data)
+                        (data, addr) = self.udp.recvfrom(1500)
 
                         if ENABLE_CRYPTO:
                             payload = self.cipher.decrypt(data)
@@ -47,14 +45,14 @@ class UDP:
                         if not payload:
                             print('read or decrypt failed')
                             continue
-                        
+
                         if addr not in self.peers:
                             ip = IP(payload)
                             self.peers[ip.src] = addr
 
                         self.tun.write(payload)
                     else:
-                        data = self.tun.read(MCU)
+                        data = self.tun.read(MTU)
                         if ENABLE_CRYPTO:
                             payload = self.cipher.encrypt(data)
                         else:
@@ -74,7 +72,7 @@ class UDP:
                     print('occur some errors')
 
     def start(self, host=None, port=6666):
-        self.tun = Tunnel('fastvpn', TUNNEL_ADDRESS)
+        self.tun = Tunnel('fast', TUNNEL_ADDRESS)
         self.tun.up()
 
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -90,6 +88,7 @@ class UDP:
 
         self.create_session()
 
+
 def read_key(possible_key):
     key = None
     if not possible_key:
@@ -102,6 +101,7 @@ def read_key(possible_key):
                 fp.write(key)
 
     return key
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='Fast VPN', add_help=False)
@@ -122,7 +122,7 @@ if __name__ == '__main__':
         TUNNEL_ADDRESS = args.tunnel
     else:
         if not IS_SERVER:
-            TUNNEL_ADDRESS = '10.10.0.2'
+            TUNNEL_ADDRESS = '10.10.0.3'
 
     try:
         server = UDP(key)

@@ -1,0 +1,10 @@
+# Copy this file to /etc/systemd/system directory
+
+[Unit]
+Description=Fast VPN
+
+[Service]
+# Command to execute when the service is started
+ExecStart=/root/venv/bin/python /root/fast_vpn/tcp.py
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/root/fast_vpn
