@@ -110,10 +110,12 @@ class TCP:
     def read_tun(self):
         while True:
             data = self.tun.read(MTU)
-            if ENABLE_LOG:
-                print(f'receive {len(data)} bytes from tun')
-
+            print('read tun', len(data))
             ip = IP(data)
+            if ENABLE_LOG:
+                print(
+                    f'receive packet {ip.src} -> {ip.dst} {len(data)} bytes from tun')
+
             result = self.sessions.get(ip.dst)
             if result:
                 self.write_packet(result[0], data, result[1])
@@ -131,6 +133,10 @@ class TCP:
                     break
 
                 ip = IP(payload)
+                if ENABLE_LOG:
+                    print(
+                        f'receive tcp packet {ip.src} -> {ip.dst} {len(payload)} bytes')
+
                 if ip.src not in self.sessions.keys():
                     self.mutex.acquire()
                     self.sessions[ip.src] = (peer, Cipher(self.key, True))
@@ -177,7 +183,7 @@ class TCP:
             self.parse_command(cmd)
 
     def setup_tunnel(self):
-        self.tun = Tunnel('fast', TUNNEL_ADDRESS)
+        self.tun = Tunnel('fastvpn', TUNNEL_ADDRESS)
         self.tun.up()
         tun_thread = threading.Thread(target=self.read_tun)
         tun_thread.setDaemon(True)
